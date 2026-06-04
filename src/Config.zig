@@ -3,7 +3,9 @@
 
 const std = @import("std");
 
-pub const version = "0.1.0";
+/// Release version, injected from `build.zig.zon`'s `.version` via the build
+/// system (see build.zig). Single source of truth — never hardcode it here.
+pub const version = @import("build_options").version;
 
 pub const Config = struct {
     listen_host: [:0]const u8 = "0.0.0.0",

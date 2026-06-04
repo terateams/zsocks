@@ -155,6 +155,27 @@ Run the e2e suite locally with:
 bash test/e2e.sh        # builds, then exercises TCP/auth/UDP through the proxy
 ```
 
+### Versioning & cutting a release
+
+The version lives in **exactly one place** — `build.zig.zon`'s `.version`.
+`build.zig` imports it (`@import("build.zig.zon").version`) and injects it into
+the binary through a `build_options` module, so `zsocks --version`, the startup
+banner, and the release artifacts all derive from that single field — no source
+constant to keep in sync.
+
+To release `X.Y.Z`:
+
+```sh
+# 1. bump the single source of truth
+sed -i 's/\.version = ".*"/.version = "X.Y.Z"/' build.zig.zon
+git commit -am "Release vX.Y.Z"
+
+# 2. tag and push — the release workflow's guard fails if the tag and
+#    build.zig.zon .version disagree
+git tag vX.Y.Z
+git push origin main --tags
+```
+
 ## Protocol support & limitations
 
 - Methods: `0x00` (no-auth), `0x02` (username/password). `BIND` is **not**
