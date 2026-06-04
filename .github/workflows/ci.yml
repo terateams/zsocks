@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: "0.16.0"
+  # Pinned upstream SHA256 (x86_64-linux), see https://ziglang.org/download/index.json
+  ZIG_SHA256_X86_64: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+
+jobs:
+  unit-test:
+    name: Unit tests (zig build test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -fsSL "$url" -o /tmp/zig.tar.xz
+          echo "${ZIG_SHA256_X86_64}  /tmp/zig.tar.xz" | sha256sum -c -
+          sudo mkdir -p /opt/zig
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          sudo ln -s /opt/zig/zig /usr/local/bin/zig
+          zig version
+
+      - name: zig build test
+        run: zig build test --summary all
+
+  cross-build:
+    name: Cross-build ${{ matrix.arch }} (static + size budget)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-linux-musl
+            cpu: ""
+          - arch: arm64
+            target: aarch64-linux-musl
+            cpu: ""
+          - arch: armv7
+            target: arm-linux-musleabihf
+            cpu: "generic+v7a"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -fsSL "$url" -o /tmp/zig.tar.xz
+          echo "${ZIG_SHA256_X86_64}  /tmp/zig.tar.xz" | sha256sum -c -
+          sudo mkdir -p /opt/zig
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          sudo ln -s /opt/zig/zig /usr/local/bin/zig
+          zig version
+
+      - name: Build + assert static and <=512KB
+        run: |
+          set -euo pipefail
+          size_budget=524288
+          cpu_arg=""
+          if [ -n "${{ matrix.cpu }}" ]; then cpu_arg="-Dcpu=${{ matrix.cpu }}"; fi
+          zig build -Dtarget="${{ matrix.target }}" $cpu_arg -Doptimize=ReleaseSmall
+          path="zig-out/bin/zsocks"
+          if readelf -d "$path" 2>/dev/null | grep -q NEEDED; then
+            echo "ERROR: ${path} is dynamically linked" >&2; exit 1
+          fi
+          size=$(stat -c%s "$path")
+          echo "zsocks (${{ matrix.arch }}): ${size} bytes"
+          if [ "$size" -gt "$size_budget" ]; then
+            echo "ERROR: ${path} ${size} bytes exceeds ${size_budget}" >&2; exit 1
+          fi
+
+  e2e:
+    name: Functional e2e (TCP + auth + UDP relay)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -fsSL "$url" -o /tmp/zig.tar.xz
+          echo "${ZIG_SHA256_X86_64}  /tmp/zig.tar.xz" | sha256sum -c -
+          sudo mkdir -p /opt/zig
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          sudo ln -s /opt/zig/zig /usr/local/bin/zig
+          zig version
+
+      - name: Build (ReleaseSafe)
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Run hermetic e2e (curl + python3)
+        run: bash test/e2e.sh zig-out/bin/zsocks
+
+  docker:
+    name: Docker build smoke (busybox image, amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build busybox-based image for amd64
+        run: docker build --build-arg TARGETARCH=amd64 -t zsocks:ci .
+
+      - name: Run image and verify it proxies
+        run: |
+          set -euo pipefail
+          # host networking so the in-container proxy can reach the host's test
+          # HTTP server on 127.0.0.1 (and so 1080 is reachable without -p).
+          docker run -d --name zsocks-ci --network host zsocks:ci -p 1080
+          python3 -m http.server 18080 --bind 127.0.0.1 &
+          HTTP_PID=$!
+          trap 'kill $HTTP_PID 2>/dev/null || true; docker rm -f zsocks-ci >/dev/null 2>&1 || true' EXIT
+          sleep 2
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            --socks5-hostname 127.0.0.1:1080 "http://127.0.0.1:18080/")
+          echo "proxied HTTP status: $code"
+          test "$code" = "200"
