@@ -108,7 +108,7 @@ Released tags publish a multi-arch manifest (amd64 / arm64 / arm/v7 — the set
 RouterOS containers support):
 
 ```sh
-docker run --rm -p 1080:1080 ghcr.io/jamiesun/zsocks:latest -p 1080 -u alice -P secret
+docker run --rm -p 1080:1080 ghcr.io/terateams/zsocks:latest -p 1080 -u alice -P secret
 ```
 
 ### Build locally
@@ -130,7 +130,7 @@ Pull from GHCR directly, or export an offline tarball (release runs attach these
 as `zsocks-image-<ver>-<arch>.tar.gz` artifacts):
 
 ```sh
-docker save ghcr.io/jamiesun/zsocks:latest -o zsocks.tar
+docker save ghcr.io/terateams/zsocks:latest -o zsocks.tar
 ```
 
 ```
