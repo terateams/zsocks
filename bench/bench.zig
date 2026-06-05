@@ -49,7 +49,6 @@ const default_sites = [_][]const u8{
     "https://mirrors.tuna.tsinghua.edu.cn/",
     "https://mirrors.aliyun.com/",
     "https://www.jd.com/robots.txt",
-    "https://te3.lsn189.cn/static/images/nav-logo.png",
     // throughput-oriented sized downloads
     "https://speed.cloudflare.com/__down?bytes=2000000",
     "https://speed.cloudflare.com/__down?bytes=10000000",
