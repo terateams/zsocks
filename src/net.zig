@@ -165,8 +165,51 @@ pub fn accept(fd: Fd) Error!Accepted {
     return .{ .fd = cfd, .peer = peer };
 }
 
-pub fn connect(fd: Fd, addr: *const Addr) Error!void {
-    if (c.connect(fd, addr.ptr(), addr.len) != 0) return Error.Connect;
+/// O_NONBLOCK as a raw fcntl flag bit, derived from std.c's per-OS `O` layout.
+const o_nonblock: c_int = blk: {
+    var o: c.O = .{};
+    o.NONBLOCK = true;
+    break :blk @bitCast(o);
+};
+
+/// Toggle the socket's blocking mode. Used to bound connect() with poll().
+fn setBlocking(fd: Fd, blocking: bool) Error!void {
+    const cur = c.fcntl(fd, c.F.GETFL);
+    if (cur < 0) return Error.SetSockOpt;
+    const flags: c_int = if (blocking) cur & ~o_nonblock else cur | o_nonblock;
+    if (c.fcntl(fd, c.F.SETFL, flags) < 0) return Error.SetSockOpt;
+}
+
+/// Connect with a bounded wait. A blocking connect() to a black-holed host can
+/// hang for the kernel's SYN-retry default (~127 s on Linux), pinning a pool
+/// slot and eroding the proxy's bounded-resource guarantee. We connect
+/// non-blocking and poll for completion: `timeout_ms < 0` waits indefinitely
+/// (matching the old blocking behaviour when --timeout=0), otherwise the
+/// attempt is capped. The socket is restored to blocking mode on success so
+/// the relay's SO_RCVTIMEO/SO_SNDTIMEO timeouts continue to apply.
+pub fn connect(fd: Fd, addr: *const Addr, timeout_ms: i32) Error!void {
+    try setBlocking(fd, false);
+    if (c.connect(fd, addr.ptr(), addr.len) == 0) {
+        try setBlocking(fd, true);
+        return;
+    }
+    // EINTR can interrupt the syscall before it reports EINPROGRESS; the
+    // attempt is still in flight in the kernel, so poll for completion too.
+    const e = lastErrno();
+    if (e != .INPROGRESS and e != .INTR) return Error.Connect;
+
+    var pfd = [_]c.pollfd{pollfd(fd, Poll.OUT)};
+    const n = Poll.wait(&pfd, timeout_ms) catch return Error.Connect;
+    if (n == 0) return Error.Connect; // timed out
+
+    // poll() readiness only means the handshake finished; SO_ERROR carries the
+    // actual result (0 = connected, otherwise the connect errno).
+    var err: c_int = 0;
+    var len: c.socklen_t = @sizeOf(c_int);
+    if (c.getsockopt(fd, c.SOL.SOCKET, c.SO.ERROR, &err, &len) != 0) return Error.Connect;
+    if (err != 0) return Error.Connect;
+
+    try setBlocking(fd, true);
 }
 
 pub fn getSockName(fd: Fd) Error!Addr {
