@@ -92,28 +92,89 @@ zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 
 ## Docker / RouterOS container
 
-A multi-stage `Dockerfile` produces a `scratch`-based image containing only the
-static binary:
+The multi-stage `Dockerfile` cross-compiles the static binary with Zig (no qemu)
+and ships it on a tiny **`busybox:musl`** base — a ~3 MB image that still
+includes a shell, `nc`, and core utilities for in-container debugging while the
+daemon itself stays fully static.
+
+### Pull a pre-built image (GHCR)
+
+Released tags publish a multi-arch manifest (amd64 / arm64 / arm/v7 — the set
+RouterOS containers support):
 
 ```sh
-# Build for the target architecture (RouterOS supports arm64 / arm / amd64)
-docker build --build-arg TARGET=aarch64-linux-musl -t zsocks:arm64 .
-
-# Export a rootfs tarball for RouterOS's container package
-docker save zsocks:arm64 -o zsocks-arm64.tar
+docker run --rm -p 1080:1080 ghcr.io/jamiesun/zsocks:latest -p 1080 -u alice -P secret
 ```
 
-Deploy on RouterOS (container package must be installed):
+### Build locally
+
+```sh
+# BuildKit injects TARGETARCH; build for the current host by default
+docker build -t zsocks .
+
+# Or pick an architecture explicitly
+docker build --build-arg TARGETARCH=arm64 -t zsocks:arm64 .
+```
+
+The image has a `HEALTHCHECK` that probes the SOCKS port with `nc -z`
+(`ZSOCKS_HEALTH_PORT`, default `1080`).
+
+### Deploy on RouterOS
+
+Pull from GHCR directly, or export an offline tarball (release runs attach these
+as `zsocks-image-<ver>-<arch>.tar.gz` artifacts):
+
+```sh
+docker save ghcr.io/jamiesun/zsocks:latest -o zsocks.tar
+```
 
 ```
-/container/config/set registry-url=... tmpdir=...
-/container/add file=zsocks-arm64.tar interface=veth1 \
+/container/config/set registry-url=https://ghcr.io tmpdir=disk1/tmp
+/container/add file=zsocks.tar interface=veth1 \
     cmd="-p 1080 -u alice -P secret" root-dir=disk1/zsocks
 /container/start 0
 ```
 
 Because concurrency and buffers are capped, the proxy will not exhaust the
 router's RAM the way an unbounded proxy could.
+
+## Continuous integration & releases
+
+- **CI** (`.github/workflows/ci.yml`, on push/PR): unit tests, a cross-build
+  matrix asserting each musl target is statically linked and within a 512 KB
+  budget, a hermetic functional e2e (`test/e2e.sh`: TCP CONNECT, auth accept/
+  reject, UDP ASSOCIATE echo), and a busybox image build+proxy smoke test.
+- **Release** (`.github/workflows/release.yml`, on `v*` tags): a version guard
+  (tag must equal `build.zig.zon` `.version`), the e2e gate, static binary
+  tarballs + `SHA256SUMS.txt` attached to a GitHub Release, and a multi-arch
+  busybox image (plus offline tarballs) pushed to GHCR.
+
+Run the e2e suite locally with:
+
+```sh
+bash test/e2e.sh        # builds, then exercises TCP/auth/UDP through the proxy
+```
+
+### Versioning & cutting a release
+
+The version lives in **exactly one place** — `build.zig.zon`'s `.version`.
+`build.zig` imports it (`@import("build.zig.zon").version`) and injects it into
+the binary through a `build_options` module, so `zsocks --version`, the startup
+banner, and the release artifacts all derive from that single field — no source
+constant to keep in sync.
+
+To release `X.Y.Z`:
+
+```sh
+# 1. bump the single source of truth
+sed -i 's/\.version = ".*"/.version = "X.Y.Z"/' build.zig.zon
+git commit -am "Release vX.Y.Z"
+
+# 2. tag and push — the release workflow's guard fails if the tag and
+#    build.zig.zon .version disagree
+git tag vX.Y.Z
+git push origin main --tags
+```
 
 ## Protocol support & limitations
 

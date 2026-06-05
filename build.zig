@@ -1,8 +1,18 @@
 const std = @import("std");
 
+// Single source of truth for the release version: `build.zig.zon`'s `.version`.
+// It is injected into the binary via the `build_options` module below, so the
+// string is never duplicated in source. Bump it there before tagging; the
+// release workflow asserts the git tag matches it.
+const version = @import("build.zig.zon").version;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    // Expose the package version to the code as `@import("build_options")`.
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version);
 
     const exe = b.addExecutable(.{
         .name = "zsocks",
@@ -13,6 +23,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    exe.root_module.addOptions("build_options", build_options);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -29,6 +40,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    tests.root_module.addOptions("build_options", build_options);
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -51,11 +63,12 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main.zig"),
                 .target = resolved,
-                .optimize = .ReleaseSafe,
+                .optimize = .ReleaseSmall,
                 .link_libc = true,
                 .strip = true,
             }),
         });
+        rel.root_module.addOptions("build_options", build_options);
         // Statically link libc so the artifact is a single self-contained binary.
         rel.linkage = .static;
         const install = b.addInstallArtifact(rel, .{
