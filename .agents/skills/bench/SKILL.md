@@ -17,7 +17,8 @@ description: 对 SOCKS5 代理（默认 zsocks）做多角度压测并生成详�
 | 国内 cn     | 原始吞吐 + 并发延迟 | 真实页面加载（TLS+JS） |
 
 - **两组站点**：`bench/sites-global.txt`（国外）、`bench/sites-cn.txt`（国内）。
-  分开测能区分跨境线路抖动 vs 域内表现。
+  分开测能区分跨境线路抖动 vs 域内表现。另有 `bench/sites-cn-bw.txt`（国内大文件
+  池，24–70MB × 7 个镜像站）专用于测**国内下载带宽峰值**，多源分散避免单站限流。
 - **两类工具**：
   - `bench.zig`（`zig build bench`）— 零依赖 Zig 负载发生器，完整 SOCKS5 握手 +
     域名 ATYP（代理解析 DNS）+ 隧道内 TLS + HTTP GET。压并发、看吞吐/延迟分布。
@@ -107,6 +108,13 @@ bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-global.txt -n 15
 ```bash
 bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-cn.txt -n 15
 ```
+
+**5) 国内 — 下载带宽峰值**（大文件多源，找吞吐上限）
+```bash
+zig-out/bin/zsocks-bench --proxy "$P" $AUTH --list bench/sites-cn-bw.txt -n 40 -c 16
+```
+> 每个目标 24–70MB，bench.zig 会下完整 body。判断瓶颈：若提高并发吞吐不再上升、
+> 同时代理 CPU 仍低（见下方采样），则峰值受**出口带宽/网络路径**所限而非代理。
 
 参数速查见 `bench/README.md`。常见可调项：`-n` 总数、`-c` 并发（仅 bench.zig）、
 `--insecure` 跳过 TLS 校验、`--seed` 复现站点选择。

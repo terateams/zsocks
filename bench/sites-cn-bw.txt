@@ -1,0 +1,27 @@
+# China-mainland HIGH-BANDWIDTH pool for zsocks throughput-peak benchmarking.
+# One URL per line; blank lines and lines starting with '#' are ignored.
+# Used as:  --list bench/sites-cn-bw.txt   (mainly bench.zig)
+#
+# Purpose: measure peak DOWNLOAD throughput through the proxy on domestic
+# routes. Every entry is a large file (24-70 MB) and the pool spreads them
+# across 7 distinct mirror hosts, so concurrent workers hit different origins
+# and no single mirror rate-limits the run.
+#
+# NOTE: these are real distro/runtime tarballs; bench.zig downloads the full
+# body. Use a modest request count (e.g. -n 40 -c 16) so the run finishes in a
+# reasonable time. Not meant for lpbench.sh (the browser won't render tarballs).
+# All URLs verified reachable via the proxy on 2026-06-05.
+
+# --- Go 1.23.4 linux-amd64 (~70 MB each) — heaviest, best for peak Mbps ---
+https://mirrors.aliyun.com/golang/go1.23.4.linux-amd64.tar.gz
+https://mirrors.ustc.edu.cn/golang/go1.23.4.linux-amd64.tar.gz
+https://mirror.nju.edu.cn/golang/go1.23.4.linux-amd64.tar.gz
+
+# --- Node.js v20.18.0 linux-x64 (~24.5 MB each) — across 7 mirror hosts ---
+https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirrors.aliyun.com/nodejs-release/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirrors.huaweicloud.com/nodejs/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirror.nju.edu.cn/nodejs-release/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirrors.cloud.tencent.com/nodejs-release/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirrors.ustc.edu.cn/node/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://mirrors.bfsu.edu.cn/nodejs-release/v20.18.0/node-v20.18.0-linux-x64.tar.xz

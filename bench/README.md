@@ -13,6 +13,11 @@ origin rate-limits a run. Three pools are provided:
 - [`sites.txt`](./sites.txt) — combined global + China pool (default).
 - [`sites-global.txt`](./sites-global.txt) — overseas origins only.
 - [`sites-cn.txt`](./sites-cn.txt) — China-mainland origins only.
+- [`sites-cn-bw.txt`](./sites-cn-bw.txt) — China-mainland **large files** (24–70 MB
+  across 7 mirror hosts) for measuring peak download throughput without a single
+  mirror throttling the run. Use with `bench.zig` and a modest count, e.g.
+  `--list bench/sites-cn-bw.txt -n 40 -c 16`. Not for `lpbench.sh` (the browser
+  won't render tarballs).
 
 Testing the two regional lists separately makes it easy to tell a cross-border
 line problem apart from a proxy problem.
