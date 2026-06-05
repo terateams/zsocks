@@ -32,6 +32,25 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run zsocks");
     run_step.dependOn(&run_cmd.step);
 
+    // `zig build bench -- <args>` — Zig SOCKS5 load generator that drives real
+    // requests through the proxy against a randomized pool of public sites.
+    const bench = b.addExecutable(.{
+        .name = "zsocks-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    bench.root_module.addOptions("build_options", build_options);
+    const run_bench = b.addRunArtifact(bench);
+    run_bench.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_bench.addArgs(args);
+    const bench_step = b.step("bench", "Run the SOCKS5 load generator (zig build bench -- --help)");
+    bench_step.dependOn(&run_bench.step);
+    b.installArtifact(bench);
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
