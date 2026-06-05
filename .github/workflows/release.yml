@@ -19,7 +19,7 @@ jobs:
     name: Verify tag matches build.zig.zon version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Assert git tag == build.zig.zon .version
         run: |
           set -euo pipefail
@@ -41,7 +41,7 @@ jobs:
     needs: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Zig ${{ env.ZIG_VERSION }}
         run: |
@@ -80,7 +80,7 @@ jobs:
             target: arm-linux-musleabihf
             cpu: "generic+v7a"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Zig ${{ env.ZIG_VERSION }}
         run: |
@@ -121,7 +121,7 @@ jobs:
           ls -l dist
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: zsocks-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -132,7 +132,7 @@ jobs:
     needs: [guard, e2e]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Resolve lowercase image name
         id: img
@@ -193,7 +193,7 @@ jobs:
           ls -l images
 
       - name: Upload offline image artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: zsocks-images
           path: images/*.tar.gz
@@ -205,7 +205,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
