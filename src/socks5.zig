@@ -222,7 +222,7 @@ pub const Connection = struct {
         defer if (rfd_owned) net.close(rfd);
 
         net.setTimeouts(rfd, self.cfg.timeout_sec);
-        net.connect(rfd, &remote) catch {
+        net.connect(rfd, &remote, self.pollTimeout()) catch {
             try self.replyError(Rep.conn_refused);
             return;
         };
