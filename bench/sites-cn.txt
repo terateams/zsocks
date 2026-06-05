@@ -1,0 +1,20 @@
+# China mainland website pool for zsocks benchmarking.
+# One URL per line; blank lines and lines starting with '#' are ignored.
+# Used as:  --list bench/sites-cn.txt  (bench.zig and lpbench.sh)
+#
+# Origins served from China mainland. Use this list to measure the proxy's
+# behaviour on domestic routes (typically lower RTT from a China-based exit).
+
+# --- latency-oriented (small / robots / pages) ---
+https://www.baidu.com/
+https://www.taobao.com/robots.txt
+https://www.qq.com/robots.txt
+https://www.aliyun.com/robots.txt
+https://www.bilibili.com/robots.txt
+https://www.jd.com/robots.txt
+
+# --- throughput-oriented mirrors (larger bodies) ---
+https://mirrors.tuna.tsinghua.edu.cn/
+https://mirrors.aliyun.com/
+https://mirrors.ustc.edu.cn/
+https://mirrors.cloud.tencent.com/

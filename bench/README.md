@@ -7,8 +7,15 @@ Two complementary tools that drive **real traffic through the proxy**:
 | `bench.zig` | Zig (`zig build bench`) | pool of **real public HTTPS sites** | end-to-end proxy throughput + latency over real TLS |
 | `lpbench.sh` | [Lightpanda](https://github.com/lightpanda-io/browser) headless browser | pool of real sites | real page loads (full TLS + JS) through the proxy |
 
-Both pick targets **randomly per request** from the shared
-[`sites.txt`](./sites.txt) pool so no single origin rate-limits a run.
+Both pick targets **randomly per request** from a shared pool so no single
+origin rate-limits a run. Three pools are provided:
+
+- [`sites.txt`](./sites.txt) — combined global + China pool (default).
+- [`sites-global.txt`](./sites-global.txt) — overseas origins only.
+- [`sites-cn.txt`](./sites-cn.txt) — China-mainland origins only.
+
+Testing the two regional lists separately makes it easy to tell a cross-border
+line problem apart from a proxy problem.
 
 Start a proxy first (ReleaseFast recommended for realistic numbers):
 

@@ -515,6 +515,10 @@ pub fn main(init: std.process.Init) !void {
     if (list_path) |lp| {
         const data = try std.Io.Dir.cwd().readFileAlloc(io, lp, gpa, .limited(1 << 20));
         defer gpa.free(data);
+        // Reserve up front: total URL bytes can never exceed the file size, so
+        // url_storage never reallocates and the slices parseUrl holds into it
+        // stay valid for the whole run.
+        try url_storage.ensureTotalCapacity(gpa, data.len);
         var it = std.mem.tokenizeAny(u8, data, "\r\n");
         while (it.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t");

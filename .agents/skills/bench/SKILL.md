@@ -1,126 +1,188 @@
 ---
 name: bench
-description: 对 SOCKS5 代理（默认 zsocks）做压测并生成测试报告。当用户要求测试代理性能、跑 benchmark、压测 SOCKS5、用真实网站验证代理吞吐/延迟，或要求用 Lightpanda 模拟真实浏览器请求时使用。会先向用户收集代理连接信息，再调用仓库内的 bench 工具（zig build bench / bench/lpbench.sh）执行测试并汇总成报告。
+description: 对 SOCKS5 代理（默认 zsocks）做多角度压测并生成详尽报告。当用户要求测试代理性能、跑 benchmark、压测 SOCKS5、用真实网站验证代理吞吐/延迟、对比国内外线路，或要求用无头浏览器（Lightpanda）模拟真实请求时使用。会先收集代理连接信息，再用仓库内 bench 工具对【国外/国内】两组站点【分别】跑【负载压测 + 无头浏览器】两类测试，最后汇总成对比报告。
 ---
 
 # Bench
 
-使用本仓库 `bench/` 下的两个工具对 SOCKS5 代理做压测并产出报告。两个工具都从
-随机站点池中按请求挑选目标，避免单站点限流。
+对 SOCKS5 代理做**多角度**压测并产出**详尽对比报告**。核心方法：把站点池拆成
+**国外（global）** 与 **国内（cn）** 两组，分别测试，且每组都跑两类工具，避免单一
+视角失真，也便于定位是线路问题还是代理问题。
 
-- **bench.zig**（`zig build bench`）：零依赖 Zig 负载发生器，走完整 SOCKS5
-  握手 + 域名 ATYP（由代理解析 DNS）+ 隧道内 TLS + HTTP/1.1 GET，输出
-  req/s、吞吐（MB / Mbps）、ttfb/total 的 p50/p95/p99、按站点成功数、错误分类。
-  **这是默认主测工具。**
-- **lpbench.sh**：驱动 [Lightpanda](https://github.com/lightpanda-io/browser)
-  无头浏览器，做真实页面加载（完整 TLS + JS），更贴近真人流量。仅在用户明确
-  需要“真实浏览器/真实请求”模拟时使用（需下载 ~63MB nightly 二进制）。
+## 测试矩阵（四象限 + 两个观察角度）
+
+|        | 负载压测 `bench.zig` | 无头浏览器 `lpbench.sh` |
+|--------|----------------------|--------------------------|
+| 国外 global | 原始吞吐 + 并发延迟 | 真实页面加载（TLS+JS） |
+| 国内 cn     | 原始吞吐 + 并发延迟 | 真实页面加载（TLS+JS） |
+
+- **两组站点**：`bench/sites-global.txt`（国外）、`bench/sites-cn.txt`（国内）。
+  分开测能区分跨境线路抖动 vs 域内表现。
+- **两类工具**：
+  - `bench.zig`（`zig build bench`）— 零依赖 Zig 负载发生器，完整 SOCKS5 握手 +
+    域名 ATYP（代理解析 DNS）+ 隧道内 TLS + HTTP GET。压并发、看吞吐/延迟分布。
+  - `lpbench.sh` — 驱动 [Lightpanda](https://github.com/lightpanda-io/browser)
+    无头浏览器，真实页面加载（完整 TLS + JS），贴近真人流量。
+- **两个观察角度**（每组站点文件内已分区）：
+  - *延迟角度*：小响应 / 204 / robots，反映建连与往返延迟。
+  - *吞吐角度*：sized download / 镜像站，反映带宽与中继效率。
+
+完整四象限都跑齐，才算“多角度覆盖”。
 
 ## 第一步：向用户收集代理信息
 
-在跑测试前，必须先确认以下信息（缺失项用括号内默认值并向用户说明假设）：
+跑测试前确认以下信息（缺失项用括号默认值并说明假设）：
 
 | 信息 | 说明 | 默认 |
 |------|------|------|
-| 代理地址 | `host:port`。bench.zig 要求是 **IP 字面量**（非域名） | `127.0.0.1:1080` |
+| 代理地址 | `host:port`。bench.zig 要求 **IP 字面量** | `127.0.0.1:1080` |
 | 认证 | 是否需要用户名/密码（RFC 1929） | 无认证 |
-| 请求数 | 总请求数 `-n` | bench.zig 100 / lpbench 20 |
-| 并发 | 工作线程数 `-c`（仅 bench.zig） | 10 |
+| 压测请求数 | bench.zig 每组 `-n` | 80 |
+| 压测并发 | bench.zig `-c` | 16 |
+| 浏览器请求数 | lpbench 每组 `-n` | 15 |
 | TLS 校验 | 是否跳过证书校验 `--insecure`（自签证书时） | 校验 |
-| 站点池 | 自定义 URL 列表文件 `--list` | `bench/sites.txt` 内置池 |
-| 工具 | 仅 bench.zig，还是也跑 lpbench 真实浏览器 | 仅 bench.zig |
+| 是否跑无头浏览器 | 资源紧张/无需要时可只跑 bench.zig | 跑 |
 
-如果用户只给了“测一下代理 127.0.0.1:1080”，就用默认值开跑，并在报告里标注所用参数。
+> 若代理是远端/跨境出口，单个 10MB 下载会拖慢整组，请把每组 `-n` 控制在
+> 数十量级，或在报告中标注线路带宽瓶颈。
+
+### 远端代理地址发现（可选，roswire）
+
+如果代理跑在 RouterOS 容器里，可用 `roswire` 自动发现地址：
+
+```bash
+roswire --json config profiles                                  # 找 profile
+roswire --json --profile <p> raw /container/print               # 看 zsocks 容器 cmd（端口/认证）
+roswire --json --profile <p> ip firewall nat print              # 找 dst-nat 暴露端口
+roswire --json --profile <p> ip address print                   # 找可达的 LAN/veth 地址
+```
+
+用户给出的代理认证以容器 `cmd`（`-u/-P`）为准；对外测试地址通常是
+“路由器 LAN IP : dst-nat 端口”。
 
 ## 第二步：确认代理可达
 
 ```bash
-# 确认目标端口有监听（macOS/Linux 通用）
 nc -z -w3 <host> <port> && echo "reachable" || echo "NOT reachable"
 ```
 
-若不可达，先提示用户启动/检查代理，例如本地 zsocks：
+不可达时提示用户检查/启动代理（本地示例）：
 
 ```bash
 zig build -Doptimize=ReleaseFast
 zig-out/bin/zsocks -l 127.0.0.1 -p 1080 --max-conns 512
 ```
 
-## 第三步：运行 bench.zig（主测）
+## 第三步：构建工具
+
+负载发生器用 ReleaseFast 以免成为瓶颈；无头浏览器首次需下载二进制：
 
 ```bash
-# 通过 build 步骤运行（-- 之后是工具参数）
-zig build bench -- --proxy <host:port> -n <N> -c <C> [--user <u> --pass <p>] [--insecure] [--list bench/sites.txt]
-
-# 或直接运行已安装的二进制
-zig-out/bin/zsocks-bench --proxy <host:port> -n <N> -c <C> [...]
+zig build bench -Doptimize=ReleaseFast -- --version     # 产出 zig-out/bin/zsocks-bench
+bench/lpbench.sh --install --proxy <host:port> -n 1     # 首次下载 Lightpanda nightly（~63MB）
 ```
 
-参数速查：
+## 第四步：四象限测试（国外/国内 × 压测/浏览器）
 
-```
---proxy <ip:port>   SOCKS5 代理（IP 字面量，默认 127.0.0.1:1080）
---user / --pass     SOCKS5 认证
---list <file>       URL 池文件（默认内置 21 站点池）
--n, --requests <N>  总请求数（默认 100）
--c, --concurrency   并发线程数（默认 10）
---seed <n>          固定随机种子，便于复现站点选择
---insecure          跳过 TLS 证书/主机名校验
-```
-
-建议梯度：先 `-n 50 -c 8` 冒烟，再按需 `-n 500 -c 32` 加压。压测时可同时采样
-代理进程常驻内存，验证“内存有界”：
+设变量便于复用（按实际填写）：
 
 ```bash
-ps -o rss= -p <zsocks-pid>   # 不随传输字节增长
+P="<host:port>"; AUTH="--user <u> --pass <p>"   # 无认证则 AUTH=""
+LP_AUTH="--user <u> --pass <p>"                  # lpbench 同上；无认证则置空
 ```
 
-## 第四步（可选）：运行 lpbench.sh（真实浏览器）
-
-仅当用户需要真实浏览器/JS 模拟时：
-
+**1) 国外 — 负载压测**
 ```bash
-# 首次运行自动下载对应平台 nightly 到 bench/lightpanda（已被 .gitignore 忽略）
-bench/lpbench.sh --install --proxy <host:port> -n <N>
-
-# 已有二进制后
-bench/lpbench.sh --proxy <host:port> -n <N> [--user <u> --pass <p>] [--insecure] [--dump html|markdown]
+zig-out/bin/zsocks-bench --proxy "$P" $AUTH --list bench/sites-global.txt -n 80 -c 16
+```
+**2) 国内 — 负载压测**
+```bash
+zig-out/bin/zsocks-bench --proxy "$P" $AUTH --list bench/sites-cn.txt -n 80 -c 16
+```
+**3) 国外 — 无头浏览器**
+```bash
+bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-global.txt -n 15
+```
+**4) 国内 — 无头浏览器**
+```bash
+bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-cn.txt -n 15
 ```
 
-> lpbench 经 libcurl 用 `socks5h://`（远端 DNS，与 zsocks 域名 ATYP 行为一致）。
-> 在 musl/Alpine 上 nightly 为 glibc 链接，可能无法运行——此时跳过本步并说明。
+参数速查见 `bench/README.md`。常见可调项：`-n` 总数、`-c` 并发（仅 bench.zig）、
+`--insecure` 跳过 TLS 校验、`--seed` 复现站点选择。
 
-## 第五步：生成报告
+### 同时采样代理侧资源（强烈建议）
 
-把工具输出整理为简洁报告，**不要**直接粘贴整段原始日志。报告应包含：
+压测进行时，采样代理进程/容器的 CPU 与常驻内存，验证“资源有界、不抢占宿主”。
 
-1. **测试配置**：代理地址、认证开关、工具、`-n`/`-c`、TLS 校验、站点池、时间戳。
-2. **结果汇总**：
-   - bench.zig：成功率、req/s、总量（MB）、吞吐（Mbps）、ttfb 与 total 的
-     p50/p95/p99/max、错误分类（connect / auth / tls / http / io）。
-   - lpbench：成功率、页面加载延迟 p50/p95/p99/max、抓取内容量。
-3. **每站点表现**：是否有特定站点失败或显著拖慢（区分代理问题 vs 单站点限流/网络）。
-4. **内存**：若采样了 RSS，给出峰值并说明是否保持有界。
-5. **结论与建议**：是否达标、瓶颈所在、下一步加压或排查建议。
+本地进程：
+```bash
+ps -o rss= -p <zsocks-pid>     # 多次采样，应保持平稳
+```
 
-报告示例骨架：
+RouterOS 容器（roswire）：
+```bash
+roswire --json --profile <p> raw /container/print     # 取 cpu-usage / memory-current
+roswire --json --profile <p> raw /system/resource/print  # 路由器整机 cpu-load / free-memory
+```
+
+## 第五步：输出详尽报告
+
+把四象限结果整理成**结构化对比报告**，不要直接粘贴整段原始日志。至少包含：
+
+1. **测试环境**
+   - 代理地址、发现方式（如 roswire 容器+dst-nat）、认证开关、出口位置（境内/跨境）。
+   - 测试机位置与到代理的网络路径、时间戳、工具版本、各项 `-n`/`-c`。
+2. **结果矩阵**（四象限对比表）
+
+   | 维度 | 国外 压测 | 国内 压测 | 国外 浏览器 | 国内 浏览器 |
+   |------|----------|----------|------------|------------|
+   | 成功率 | | | | |
+   | req/s 或 页/s | | | | |
+   | 吞吐 Mbps | | | n/a | n/a |
+   | total p50/p95/p99 (ms) | | | | |
+   | 错误分类 | | | | |
+
+3. **分角度解读**
+   - *延迟 vs 吞吐*：小响应站点的 ttfb 体现建连开销；sized download 体现带宽中继。
+   - *国外 vs 国内*：对比 RTT 与成功率差异，判断是跨境线路问题还是代理问题。
+   - *压测 vs 浏览器*：原始中继 OK 但浏览器失败 → 可能 TLS/SNI/DNS 行为差异；
+     反之浏览器 OK 但压测高错误 → 多为高并发下上游限流/连接复位。
+4. **每站点表现**：列出失败或显著拖慢的站点，明确区分「单站点限流/网络」与
+   「代理故障」（失败集中在单站点通常不是代理问题）。
+5. **代理资源**：CPU 峰值、常驻内存峰值，是否保持有界（zsocks 典型 <20MB 恒定）。
+6. **结论与建议**：是否达标、瓶颈定位（出口带宽 / 跨境 RTT / 上游限流 / 代理）、
+   下一步加压或排查方向。
+
+报告骨架示例：
 
 ```
-## SOCKS5 压测报告
-- 配置: proxy=127.0.0.1:1080, auth=无, 工具=bench.zig, n=500 c=32, TLS校验=开
-- 结果: 成功 500/500 (100%), 142 req/s, 856 MB, 612 Mbps
-- 延迟(ms): ttfb p50/p95/p99 = 41/118/203; total p50/p95/p99 = 95/340/612
-- 错误: 无
-- 内存: 代理 RSS 峰值 10.1 MB（有界）
-- 结论: 吞吐与延迟正常，无错误；建议 c=64 进一步探顶。
+## SOCKS5 多角度压测报告
+### 环境
+- 代理: 10.189.189.1:11080（RouterOS 容器 zsocks-test，dst-nat→172.30.67.2:1080），认证开
+- 工具: zsocks-bench(ReleaseFast) / Lightpanda nightly；压测 n=80 c=16，浏览器 n=15
+### 结果矩阵
+| 维度 | 国外压测 | 国内压测 | 国外浏览器 | 国内浏览器 |
+| 成功率 | 100% | 100% | 100% | 100% |
+| 吞吐 | 22 Mbps | 60 Mbps | n/a | n/a |
+| total p95(ms) | 8600 | 1200 | 5100 | 1300 |
+| 错误 | 无 | 无 | 无 | 无 |
+### 解读
+- 国内 RTT/吞吐明显优于国外 → 出口在境内，跨境线路是主要延迟来源，非代理瓶颈。
+- 压测与浏览器结论一致，TLS/DNS 行为正常。
+### 资源
+- 容器 CPU 峰值 ~0.3%，内存 17MB 恒定（有界）。
+### 结论
+- 代理稳定达标；跨境吞吐受线路限制。建议境内场景可放心共享，跨境重负载需评估带宽。
 ```
 
 ## 注意事项
 
-- bench.zig 的 `--proxy` 必须用 IP 字面量；目标站点以域名 ATYP 传给代理，
-  由代理侧解析 DNS（正是要压的路径）。
-- 默认站点池含国内外站点和不同体积的下载，结果含真实网络抖动；要看“纯代理
-  开销”请缩小到稳定站点或提高并发取相对值。
-- 失败大量集中在单一站点通常是该站点限流/网络问题，不一定是代理故障，需在
-  报告中区分。
+- bench.zig 的 `--proxy` 必须用 IP 字面量；目标以域名 ATYP 传给代理，由代理解析
+  DNS（正是要压的路径）。lpbench 经 libcurl 用 `socks5h://`（远端 DNS），与之一致。
+- `speed.cloudflare.com/__down` 等非 HTML 接口只适合 bench.zig 量吞吐；无头浏览器
+  对其只会抓到极少字节，**不要**用它评判浏览器吞吐。
+- 跨境/远端代理的低吞吐多为出口带宽或 RTT 所致，需与代理故障区分清楚并在报告说明。
+- 在 musl/Alpine 上 Lightpanda nightly 为 glibc 链接可能无法运行，此时跳过浏览器
+  象限并注明。
 - 详尽用法见仓库 `bench/README.md`。
