@@ -17,8 +17,10 @@ description: 对 SOCKS5 代理（默认 zsocks）做多角度压测并生成详�
 | 国内 cn     | 原始吞吐 + 并发延迟 | 真实页面加载（TLS+JS） |
 
 - **两组站点**：`bench/sites-global.txt`（国外）、`bench/sites-cn.txt`（国内）。
-  分开测能区分跨境线路抖动 vs 域内表现。另有 `bench/sites-cn-bw.txt`（国内大文件
-  池，24–70MB × 7 个镜像站）专用于测**国内下载带宽峰值**，多源分散避免单站限流。
+  分开测能区分跨境线路抖动 vs 域内表现。另有两个**大文件带宽峰值池**——
+  `bench/sites-global-bw.txt`（国外，12–87MB × 8 个 CDN 主机）与
+  `bench/sites-cn-bw.txt`（国内，24–70MB × 7 个镜像站）——分别用于测**国外/国内
+  下载带宽峰值**，多源分散避免单站限流。
 - **两类工具**：
   - `bench.zig`（`zig build bench`）— 零依赖 Zig 负载发生器，完整 SOCKS5 握手 +
     域名 ATYP（代理解析 DNS）+ 隧道内 TLS + HTTP GET。压并发、看吞吐/延迟分布。
@@ -109,12 +111,18 @@ bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-global.txt -n 15
 bench/lpbench.sh --proxy "$P" $LP_AUTH --list bench/sites-cn.txt -n 15
 ```
 
-**5) 国内 — 下载带宽峰值**（大文件多源，找吞吐上限）
+**5) 国外 — 下载带宽峰值**（大文件多源，找跨境吞吐上限）
+```bash
+zig-out/bin/zsocks-bench --proxy "$P" $AUTH --list bench/sites-global-bw.txt -n 40 -c 16
+```
+**6) 国内 — 下载带宽峰值**（大文件多源，找域内吞吐上限）
 ```bash
 zig-out/bin/zsocks-bench --proxy "$P" $AUTH --list bench/sites-cn-bw.txt -n 40 -c 16
 ```
-> 每个目标 24–70MB，bench.zig 会下完整 body。判断瓶颈：若提高并发吞吐不再上升、
+> 每个目标 12–87MB，bench.zig 会下完整 body。判断瓶颈：若提高并发吞吐不再上升、
 > 同时代理 CPU 仍低（见下方采样），则峰值受**出口带宽/网络路径**所限而非代理。
+> 对比国外 vs 国内两个带宽峰值，可看出代理出口对哪侧线路更友好（如出口在境外，
+> 国内大文件常出现吞吐骤降甚至卡住）。
 
 参数速查见 `bench/README.md`。常见可调项：`-n` 总数、`-c` 并发（仅 bench.zig）、
 `--insecure` 跳过 TLS 校验、`--seed` 复现站点选择。
@@ -150,6 +158,15 @@ roswire --json --profile <p> raw /system/resource/print  # 路由器整机 cpu-l
    | 吞吐 Mbps | | | n/a | n/a |
    | total p50/p95/p99 (ms) | | | | |
    | 错误分类 | | | | |
+
+   外加**带宽峰值对比**（大文件池，bench.zig）：
+
+   | 带宽峰值 | 国外 (sites-global-bw) | 国内 (sites-cn-bw) |
+   |---------|------------------------|--------------------|
+   | 成功率 | | |
+   | 峰值吞吐 Mbps | | |
+   | 数据量 / 用时 | | |
+   | 是否随并发饱和 | | |
 
 3. **分角度解读**
    - *延迟 vs 吞吐*：小响应站点的 ttfb 体现建连开销；sized download 体现带宽中继。
@@ -191,6 +208,15 @@ roswire --json --profile <p> raw /system/resource/print  # 路由器整机 cpu-l
 - `speed.cloudflare.com/__down` 等非 HTML 接口只适合 bench.zig 量吞吐；无头浏览器
   对其只会抓到极少字节，**不要**用它评判浏览器吞吐。
 - 跨境/远端代理的低吞吐多为出口带宽或 RTT 所致，需与代理故障区分清楚并在报告说明。
+- **认证凭证含特殊字符**（如 `@`、`:`）：
+  - bench.zig 用独立的 `--user/--pass`，不受影响。
+  - curl 用 `-x socks5h://host:port --proxy-user "user:pass"`（按首个 `:` 拆分），
+    不要用内联 `socks5h://user:pass@host:port`。
+  - lpbench.sh 会拼成 `socks5h://user:pass@host:port`，凭证里的 `@`/`:` 必须先做
+    URL 编码（`@`→`%40`、`:`→`%3A`），例如 `--user 'her%40alliedai.cn' --pass 'Her%40hello189'`。
+- **bench.zig 无单请求超时**：某个被限流/黑洞的目标会一直挂住一个 worker，使整组
+  p99/max 极高甚至卡死（远端跨境代理访问国内大文件时常见）。这是工具已知限制，
+  报告里要把「单目标长尾/卡死」与「代理故障」区分开。
 - 在 musl/Alpine 上 Lightpanda nightly 为 glibc 链接可能无法运行，此时跳过浏览器
   象限并注明。
 - 详尽用法见仓库 `bench/README.md`。

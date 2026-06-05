@@ -8,7 +8,7 @@ Two complementary tools that drive **real traffic through the proxy**:
 | `lpbench.sh` | [Lightpanda](https://github.com/lightpanda-io/browser) headless browser | pool of real sites | real page loads (full TLS + JS) through the proxy |
 
 Both pick targets **randomly per request** from a shared pool so no single
-origin rate-limits a run. Three pools are provided:
+origin rate-limits a run. Five pools are provided:
 
 - [`sites.txt`](./sites.txt) — combined global + China pool (default).
 - [`sites-global.txt`](./sites-global.txt) — overseas origins only.
@@ -18,6 +18,11 @@ origin rate-limits a run. Three pools are provided:
   mirror throttling the run. Use with `bench.zig` and a modest count, e.g.
   `--list bench/sites-cn-bw.txt -n 40 -c 16`. Not for `lpbench.sh` (the browser
   won't render tarballs).
+- [`sites-global-bw.txt`](./sites-global-bw.txt) — overseas **large files**
+  (12–87 MB across 8 distinct CDN hosts: Google, Cloudflare, Mozilla, Fastly,
+  OpenJS, OVH, Tele2) — the international counterpart of `sites-cn-bw.txt` for
+  measuring peak download throughput on cross-border routes. Use with
+  `bench.zig`, e.g. `--list bench/sites-global-bw.txt -n 40 -c 16`.
 
 Testing the two regional lists separately makes it easy to tell a cross-border
 line problem apart from a proxy problem.

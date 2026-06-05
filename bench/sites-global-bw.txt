@@ -1,0 +1,26 @@
+# GLOBAL (international) HIGH-BANDWIDTH pool for zsocks throughput-peak benchmarking.
+# One URL per line; blank lines and lines starting with '#' are ignored.
+# Used as:  --list bench/sites-global-bw.txt   (mainly bench.zig)
+#
+# Purpose: measure peak DOWNLOAD throughput through the proxy on INTERNATIONAL
+# routes (counterpart to sites-cn-bw.txt). Every entry is a large file
+# (12-87 MB) spread across 8 distinct CDN hosts on different providers/regions
+# (Google, Cloudflare, Mozilla, Fastly, OpenJS, OVH/FR, Tele2/SE), so concurrent
+# workers hit different origins and no single host rate-limits the run.
+#
+# NOTE: bench.zig downloads the full body of every entry. Use a modest request
+# count (e.g. -n 40 -c 16) so the run finishes in a reasonable time. Not meant
+# for lpbench.sh (the browser won't render tarballs/binaries).
+# All URLs verified reachable + sizes confirmed on 2026-06-05.
+
+# --- Heaviest (73-87 MB each) — best for peak Mbps ---
+https://download-installer.cdn.mozilla.net/pub/firefox/releases/131.0/linux-x86_64/en-US/firefox-131.0.tar.bz2
+https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
+https://dl.google.com/go/go1.23.4.linux-amd64.tar.gz
+
+# --- Mid (12-50 MB each) — across distinct providers/regions ---
+https://speed.cloudflare.com/__down?bytes=52428800
+http://speedtest.tele2.net/50MB.zip
+https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz
+https://www.python.org/ftp/python/3.12.7/Python-3.12.7.tar.xz
+https://proof.ovh.net/files/100Mb.dat
