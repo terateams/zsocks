@@ -69,11 +69,21 @@ const Pool = struct {
     }
 };
 
+/// Atomic operational counters. Updated off the per-connection hot path with
+/// relaxed (monotonic) ordering — they are observability hints, not a barrier.
+const Stats = struct {
+    accepted: std.atomic.Value(u64) = .init(0),
+    refused: std.atomic.Value(u64) = .init(0),
+    active: std.atomic.Value(u64) = .init(0),
+    connect_failures: std.atomic.Value(u64) = .init(0),
+};
+
 pub const Server = struct {
     gpa: std.mem.Allocator,
     cfg: *const Config,
     listen_fd: net.Fd = net.invalid_fd,
     pool: Pool,
+    stats: Stats = .{},
 
     pub fn init(gpa: std.mem.Allocator, cfg: *const Config) !Server {
         const pool = try Pool.init(gpa, cfg.max_conns, cfg.buf_size);
@@ -106,6 +116,13 @@ pub const Server = struct {
             },
         );
 
+        // Opt-in periodic stats. Off by default keeps the proxy byte-for-byte
+        // quiet; when enabled a single detached thread prints to stderr.
+        if (self.cfg.stats_sec > 0) {
+            const t = std.Thread.spawn(.{}, statsLoop, .{self}) catch null;
+            if (t) |th| th.detach();
+        }
+
         while (true) {
             const accepted = net.accept(lfd) catch |e| {
                 if (e == net.Error.WouldBlock) continue;
@@ -114,9 +131,11 @@ pub const Server = struct {
 
             const idx = self.pool.acquire() orelse {
                 // At capacity: refuse to keep memory bounded.
+                _ = self.stats.refused.fetchAdd(1, .monotonic);
                 net.close(accepted.fd);
                 continue;
             };
+            _ = self.stats.accepted.fetchAdd(1, .monotonic);
 
             const slot = &self.pool.slots[idx];
             slot.conn = .{
@@ -126,6 +145,7 @@ pub const Server = struct {
                 .peer = accepted.peer,
                 .buf_c2r = slot.buf_c2r,
                 .buf_r2c = slot.buf_r2c,
+                .connect_failures = &self.stats.connect_failures,
             };
 
             const thread = std.Thread.spawn(.{}, worker, .{ self, idx }) catch {
@@ -138,8 +158,36 @@ pub const Server = struct {
     }
 
     fn worker(self: *Server, idx: usize) void {
+        _ = self.stats.active.fetchAdd(1, .monotonic);
         self.pool.slots[idx].conn.run();
+        _ = self.stats.active.fetchSub(1, .monotonic);
         self.pool.release(idx);
+    }
+
+    /// Print a one-line summary every `stats_sec` seconds until the process
+    /// exits. Counters are read with relaxed ordering — a momentarily skewed
+    /// snapshot is acceptable for an observability hint.
+    fn statsLoop(self: *Server) void {
+        // Chunk the wait so large intervals never overflow poll()'s i32 ms arg.
+        const max_chunk_ms: u64 = std.math.maxInt(i32);
+        const interval_ms = @as(u64, self.cfg.stats_sec) * 1000;
+        while (true) {
+            var remaining = interval_ms;
+            while (remaining > 0) {
+                const chunk = @min(remaining, max_chunk_ms);
+                net.sleepMs(@intCast(chunk));
+                remaining -= chunk;
+            }
+            std.debug.print(
+                "zsocks stats: accepted={d} refused={d} active={d} connect-failures={d}\n",
+                .{
+                    self.stats.accepted.load(.monotonic),
+                    self.stats.refused.load(.monotonic),
+                    self.stats.active.load(.monotonic),
+                    self.stats.connect_failures.load(.monotonic),
+                },
+            );
+        }
     }
 };
 

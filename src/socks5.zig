@@ -93,6 +93,9 @@ pub const Connection = struct {
     /// Two relay buffers owned by the connection pool (one per direction).
     buf_c2r: []u8,
     buf_r2c: []u8,
+    /// Optional atomic counter bumped when an upstream CONNECT fails to
+    /// establish. Null when stats are disabled (the default).
+    connect_failures: ?*std.atomic.Value(u64) = null,
 
     pub fn run(self: *Connection) void {
         net.setTimeouts(self.client_fd, self.cfg.timeout_sec);
@@ -211,10 +214,12 @@ pub const Connection = struct {
 
     fn doConnect(self: *Connection, target: *Target) !void {
         const remote = target.resolve(false) catch {
+            self.noteConnectFailure();
             try self.replyError(Rep.host_unreachable);
             return;
         };
         const rfd = net.tcpSocket(remote.family()) catch {
+            self.noteConnectFailure();
             try self.replyError(Rep.general_failure);
             return;
         };
@@ -223,6 +228,7 @@ pub const Connection = struct {
 
         net.setTimeouts(rfd, self.cfg.timeout_sec);
         net.connect(rfd, &remote, self.pollTimeout()) catch {
+            self.noteConnectFailure();
             try self.replyError(Rep.conn_refused);
             return;
         };
@@ -407,6 +413,10 @@ pub const Connection = struct {
 
     fn pollTimeout(self: *Connection) i32 {
         return if (self.cfg.timeout_sec == 0) -1 else @intCast(self.cfg.timeout_sec * 1000);
+    }
+
+    fn noteConnectFailure(self: *Connection) void {
+        if (self.connect_failures) |cf| _ = cf.fetchAdd(1, .monotonic);
     }
 };
 

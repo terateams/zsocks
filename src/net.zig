@@ -296,6 +296,14 @@ pub fn pollfd(fd: Fd, events: i16) c.pollfd {
     return .{ .fd = fd, .events = events, .revents = 0 };
 }
 
+/// Sleep for `ms` milliseconds using poll() with no descriptors — the only
+/// timing primitive needed by the optional stats reporter. EINTR just shortens
+/// the nap, which is fine for a periodic summary.
+pub fn sleepMs(ms: i32) void {
+    var fds: [0]c.pollfd = .{};
+    _ = c.poll(&fds, 0, ms);
+}
+
 /// Resolve `host` (IPv4 / IPv6 literal or domain) + `port` to an `Addr`.
 /// Returns the first usable result. `port` is host byte order.
 pub fn resolve(host: [:0]const u8, port: u16, want_dgram: bool) Error!Addr {
