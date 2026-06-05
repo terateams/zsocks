@@ -222,6 +222,15 @@ pub fn close(fd: Fd) void {
     if (fd >= 0) _ = c.close(fd);
 }
 
+/// Sleep for `ms` milliseconds (best-effort; EINTR just shortens the wait).
+pub fn sleepMs(ms: u32) void {
+    const ts = c.timespec{
+        .sec = @intCast(ms / 1000),
+        .nsec = @intCast((ms % 1000) * std.time.ns_per_ms),
+    };
+    _ = c.nanosleep(&ts, null);
+}
+
 pub fn shutdownBoth(fd: Fd) void {
     _ = c.shutdown(fd, c.SHUT.RDWR);
 }
