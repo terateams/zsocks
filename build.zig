@@ -44,12 +44,15 @@ pub fn build(b: *std.Build) void {
         }),
     });
     bench.root_module.addOptions("build_options", build_options);
+    // Only install/build the bench tool when `zig build bench` is invoked — keep
+    // it OUT of the default install step. The Docker build copies only `src/`
+    // (not `bench/`), so a default `zig build` must not depend on bench/*.zig.
+    const install_bench = b.addInstallArtifact(bench, .{});
     const run_bench = b.addRunArtifact(bench);
-    run_bench.step.dependOn(b.getInstallStep());
+    run_bench.step.dependOn(&install_bench.step);
     if (b.args) |args| run_bench.addArgs(args);
     const bench_step = b.step("bench", "Run the SOCKS5 load generator (zig build bench -- --help)");
     bench_step.dependOn(&run_bench.step);
-    b.installArtifact(bench);
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
