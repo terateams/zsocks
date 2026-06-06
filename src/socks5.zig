@@ -95,7 +95,7 @@ pub const Connection = struct {
     buf_r2c: []u8,
     /// Optional atomic counter bumped when an upstream CONNECT fails to
     /// establish. Null when stats are disabled (the default).
-    connect_failures: ?*std.atomic.Value(u64) = null,
+    connect_failures: ?*std.atomic.Value(u32) = null,
 
     pub fn run(self: *Connection) void {
         net.setTimeouts(self.client_fd, self.cfg.timeout_sec);
