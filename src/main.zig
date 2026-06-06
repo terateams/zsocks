@@ -23,6 +23,11 @@ pub fn main(init: std.process.Init) !void {
         .config => |cfg| {
             var server = try Server.init(gpa, &cfg);
             try server.run();
+            // run() returns only after a graceful SIGTERM/SIGINT shutdown. Exit
+            // explicitly with success: the proxy is stateless and any detached
+            // relay workers were already given a short drain window, so we skip
+            // tearing down the connection pool and terminate deterministically.
+            std.process.exit(0);
         },
     }
 }
