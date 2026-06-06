@@ -92,6 +92,7 @@ pub const Server = struct {
 
     pub fn run(self: *Server) !void {
         ignoreSigpipe();
+        installStopHandlers();
 
         const bind_addr = net.resolve(self.cfg.listen_host, self.cfg.listen_port, false) catch {
             std.debug.print("zsocks: cannot resolve listen address '{s}'\n", .{self.cfg.listen_host});
@@ -123,7 +124,10 @@ pub const Server = struct {
             if (t) |th| th.detach();
         }
 
-        while (true) {
+        // Run until SIGTERM/SIGINT flips the stop flag. A signal interrupts the
+        // blocking accept() with EINTR (mapped to WouldBlock), so the loop wakes
+        // up and re-checks the condition rather than restarting the syscall.
+        while (!stop_requested.load(.acquire)) {
             const accepted = net.accept(lfd) catch |e| {
                 if (e == net.Error.WouldBlock) continue;
                 continue; // transient accept error; keep serving
@@ -155,6 +159,16 @@ pub const Server = struct {
             };
             thread.detach();
         }
+
+        // Close the listening socket so the bound port is released promptly, then
+        // give any in-flight, detached relay workers a short best-effort window to
+        // drain before the process exits. The proxy is stateless, so this is
+        // mostly cosmetic — it just avoids abruptly cutting active transfers when
+        // a kill -TERM races with live connections.
+        net.close(lfd);
+        self.listen_fd = net.invalid_fd;
+        std.debug.print("zsocks: shutting down\n", .{});
+        net.sleepMs(shutdown_grace_ms);
     }
 
     fn worker(self: *Server, idx: usize) void {
@@ -195,4 +209,31 @@ fn ignoreSigpipe() void {
     var act = std.mem.zeroes(c.Sigaction);
     act.handler = .{ .handler = c.SIG.IGN };
     _ = c.sigaction(c.SIG.PIPE, &act, null);
+}
+
+/// Best-effort drain window for detached workers after the accept loop stops.
+const shutdown_grace_ms: u32 = 200;
+
+/// Set by SIGTERM/SIGINT; the accept loop polls it to exit the `while` cleanly.
+var stop_requested = std.atomic.Value(bool).init(false);
+
+/// Async-signal-safe handler: a single atomic store, no allocation or I/O.
+fn onStopSignal(_: c.SIG) callconv(.c) void {
+    stop_requested.store(true, .release);
+}
+
+/// Install the graceful-shutdown handler for SIGTERM (docker/RouterOS stop) and
+/// SIGINT (Ctrl-C). Mirrors `ignoreSigpipe()`'s use of `std.c.sigaction`.
+fn installStopHandlers() void {
+    var act = std.mem.zeroes(c.Sigaction);
+    act.handler = .{ .handler = onStopSignal };
+    _ = c.sigaction(c.SIG.TERM, &act, null);
+    _ = c.sigaction(c.SIG.INT, &act, null);
+}
+
+test "stop handler sets the accept-loop flag" {
+    stop_requested.store(false, .release);
+    onStopSignal(c.SIG.TERM);
+    try std.testing.expect(stop_requested.load(.acquire));
+    stop_requested.store(false, .release);
 }

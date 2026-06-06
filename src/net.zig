@@ -97,26 +97,6 @@ pub const Addr = struct {
         if (!self.sameHost(other)) return false;
         return self.port() == other.port();
     }
-
-    /// Append the address in SOCKS5 wire form (ATYP + addr + port) to `out`.
-    pub fn writeSocks5(self: *const Addr, gpa: std.mem.Allocator, out: *std.ArrayList(u8)) !void {
-        switch (self.family()) {
-            c.AF.INET => {
-                const in: *const c.sockaddr.in = @ptrCast(&self.storage);
-                try out.append(gpa, 0x01);
-                const octets: [4]u8 = @bitCast(in.addr);
-                try out.appendSlice(gpa, &octets);
-                try out.appendSlice(gpa, std.mem.asBytes(&in.port));
-            },
-            c.AF.INET6 => {
-                const in6: *const c.sockaddr.in6 = @ptrCast(&self.storage);
-                try out.append(gpa, 0x04);
-                try out.appendSlice(gpa, &in6.addr);
-                try out.appendSlice(gpa, std.mem.asBytes(&in6.port));
-            },
-            else => return Error.AddressFamily,
-        }
-    }
 };
 
 pub fn tcpSocket(domain: u32) Error!Fd {
@@ -222,8 +202,13 @@ pub fn close(fd: Fd) void {
     if (fd >= 0) _ = c.close(fd);
 }
 
-pub fn shutdownBoth(fd: Fd) void {
-    _ = c.shutdown(fd, c.SHUT.RDWR);
+/// Sleep for `ms` milliseconds (best-effort; EINTR just shortens the wait).
+pub fn sleepMs(ms: u32) void {
+    const ts = c.timespec{
+        .sec = @intCast(ms / 1000),
+        .nsec = @intCast((ms % 1000) * std.time.ns_per_ms),
+    };
+    _ = c.nanosleep(&ts, null);
 }
 
 pub fn shutdownWrite(fd: Fd) void {
@@ -294,14 +279,6 @@ pub const Poll = struct {
 
 pub fn pollfd(fd: Fd, events: i16) c.pollfd {
     return .{ .fd = fd, .events = events, .revents = 0 };
-}
-
-/// Sleep for `ms` milliseconds using poll() with no descriptors — the only
-/// timing primitive needed by the optional stats reporter. EINTR just shortens
-/// the nap, which is fine for a periodic summary.
-pub fn sleepMs(ms: i32) void {
-    var fds: [0]c.pollfd = .{};
-    _ = c.poll(&fds, 0, ms);
 }
 
 /// Resolve `host` (IPv4 / IPv6 literal or domain) + `port` to an `Addr`.

@@ -112,6 +112,11 @@ zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 
 ## Docker / RouterOS container
 
+> For a complete, step-by-step deployment guide — bare binary, **systemd**,
+> Docker & **compose**, **RouterOS** container (online & offline), **IPv6** /
+> dual-stack, resource sizing, and troubleshooting — see
+> [docs/deployment.md](docs/deployment.md).
+
 The multi-stage `Dockerfile` cross-compiles the static binary with Zig (no qemu)
 and ships it on a tiny **`busybox:musl`** base — a ~3 MB image that still
 includes a shell, `nc`, and core utilities for in-container debugging while the
