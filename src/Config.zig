@@ -19,6 +19,9 @@ pub const Config = struct {
     /// Address advertised to clients in the UDP ASSOCIATE reply. Defaults to
     /// the listen host; override when the proxy sits behind NAT/port-forward.
     udp_advertise: ?[:0]const u8 = null,
+    /// Interval (seconds) between one-line stats summaries on stderr.
+    /// 0 (default) keeps the proxy quiet — no periodic output.
+    stats_sec: u32 = 0,
 
     pub fn authRequired(self: Config) bool {
         return self.username != null;
@@ -81,6 +84,8 @@ pub fn parse(args: []const [:0]const u8) ParseError!ParseResult {
             cfg.timeout_sec = parseUint(u32, try want_value(args, &i)) catch return ParseError.InvalidValue;
         } else if (eq(arg, "--udp-advertise")) {
             cfg.udp_advertise = try want_value(args, &i);
+        } else if (eq(arg, "--stats")) {
+            cfg.stats_sec = parseUint(u32, try want_value(args, &i)) catch return ParseError.InvalidValue;
         } else {
             std.debug.print("zsocks: unknown flag '{s}'\n", .{arg});
             return ParseError.UnknownFlag;
@@ -136,6 +141,8 @@ pub fn printHelp() void {
         \\      --no-udp            Disable UDP ASSOCIATE (TCP only)
         \\      --udp-advertise <h> Address sent to clients for UDP relay
         \\                          (use when behind NAT; default = listen host)
+        \\      --stats <sec>       Print a one-line stats summary to stderr every
+        \\                          <sec> seconds, 0=off (default 0)
         \\  -h, --help              Show this help
         \\  -v, --version           Show version
         \\
@@ -171,6 +178,15 @@ test "parse auth + flags" {
     try std.testing.expect(r.config.authRequired());
     try std.testing.expect(!r.config.udp_enabled);
     try std.testing.expectEqual(@as(u32, 10), r.config.max_conns);
+}
+
+test "parse stats flag" {
+    try std.testing.expectEqual(@as(u32, 0), (try parse(&.{})).config.stats_sec);
+    const args = [_][:0]const u8{ "--stats", "5" };
+    try std.testing.expectEqual(@as(u32, 5), (try parse(&args)).config.stats_sec);
+    try std.testing.expectError(ParseError.MissingValue, parse(&.{"--stats"}));
+    const bad = [_][:0]const u8{ "--stats", "abc" };
+    try std.testing.expectError(ParseError.InvalidValue, parse(&bad));
 }
 
 test "user without pass fails" {

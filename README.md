@@ -46,12 +46,32 @@ OPTIONS:
       --no-udp            Disable UDP ASSOCIATE (TCP only)
       --udp-advertise <h> Address sent to clients for UDP relay
                           (use when behind NAT; default = listen host)
+      --stats <sec>       Print a one-line stats summary to stderr every
+                          <sec> seconds, 0=off (default 0)
   -h, --help              Show this help
   -v, --version           Show version
 ```
 
 When `--user`/`--pass` are omitted the proxy offers the *no-authentication*
 method. Both flags must be supplied together.
+
+## Operational visibility
+
+The proxy is quiet by default: after the startup banner it prints nothing. Pass
+`--stats <sec>` to periodically emit a single line to stderr with cheap atomic
+counters, useful when co-located on a constrained device:
+
+```
+zsocks stats: accepted=42 refused=0 active=3 connect-failures=1
+```
+
+- `accepted` — connections admitted into the pool.
+- `refused` — connections rejected because `--max-conns` was saturated.
+- `active` — connections currently being relayed.
+- `connect-failures` — upstream `CONNECT` attempts that failed to establish.
+
+The counters live off the per-connection hot path; with no flag the default
+output is unchanged.
 
 ## Memory model
 
