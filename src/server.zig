@@ -71,11 +71,13 @@ const Pool = struct {
 
 /// Atomic operational counters. Updated off the per-connection hot path with
 /// relaxed (monotonic) ordering — they are observability hints, not a barrier.
+/// u32 is used so the atomics compile on 32-bit targets such as ARMv7, which
+/// only support lock-free atomics for types no wider than the native word size.
 const Stats = struct {
-    accepted: std.atomic.Value(u64) = .init(0),
-    refused: std.atomic.Value(u64) = .init(0),
-    active: std.atomic.Value(u64) = .init(0),
-    connect_failures: std.atomic.Value(u64) = .init(0),
+    accepted: std.atomic.Value(u32) = .init(0),
+    refused: std.atomic.Value(u32) = .init(0),
+    active: std.atomic.Value(u32) = .init(0),
+    connect_failures: std.atomic.Value(u32) = .init(0),
 };
 
 pub const Server = struct {
