@@ -50,6 +50,45 @@ const Target = struct {
         self.host[self.host_len] = 0;
         return net.resolve(self.host[0..self.host_len :0], self.port, dgram);
     }
+
+    /// Like `resolve`, but consults a single-entry `(host, port) -> Addr`
+    /// cache first so a chatty domain-addressed UDP flow does not trigger a
+    /// blocking DNS lookup per datagram. IP literals bypass the cache.
+    fn resolveCached(self: *Target, dgram: bool, cache: *DnsCache) !net.Addr {
+        if (self.direct) |a| return a;
+        if (cache.get(self)) |a| return a;
+        self.host[self.host_len] = 0;
+        const a = try net.resolve(self.host[0..self.host_len :0], self.port, dgram);
+        cache.put(self, a);
+        return a;
+    }
+};
+
+/// Single-entry cache of the last resolved domain target for a UDP
+/// association. The association is pinned to one client endpoint, so the
+/// common case is a single upstream target; this turns a per-datagram
+/// `getaddrinfo` into a cheap memcmp. Storage is inline (zero allocation).
+const DnsCache = struct {
+    host: [256]u8 = undefined,
+    host_len: usize = 0,
+    port: u16 = 0,
+    addr: net.Addr = undefined,
+    valid: bool = false,
+
+    fn get(self: *const DnsCache, target: *const Target) ?net.Addr {
+        if (!self.valid) return null;
+        if (self.port != target.port or self.host_len != target.host_len) return null;
+        if (!std.mem.eql(u8, self.host[0..self.host_len], target.host[0..target.host_len])) return null;
+        return self.addr;
+    }
+
+    fn put(self: *DnsCache, target: *const Target, addr: net.Addr) void {
+        @memcpy(self.host[0..target.host_len], target.host[0..target.host_len]);
+        self.host_len = target.host_len;
+        self.port = target.port;
+        self.addr = addr;
+        self.valid = true;
+    }
 };
 
 /// Parse an address (ATYP + ADDR + PORT) from `data`, returning bytes
@@ -318,6 +357,7 @@ pub const Connection = struct {
         defer net.close(up6);
 
         var client_addr: ?net.Addr = null;
+        var dns_cache: DnsCache = .{};
         const timeout_ms = self.pollTimeout();
 
         while (true) {
@@ -358,7 +398,7 @@ pub const Connection = struct {
                 const pkt = net.recvFrom(ufd, in_buf) catch continue;
                 if (client_addr == null) client_addr = pkt.from;
                 if (pkt.from.eql(&client_addr.?)) {
-                    forwardClientToTarget(in_buf[0..pkt.len], &up4, &up6, self.cfg.timeout_sec);
+                    forwardClientToTarget(in_buf[0..pkt.len], &up4, &up6, self.cfg.timeout_sec, &dns_cache);
                 }
             }
 
@@ -433,7 +473,7 @@ fn writeAddr(out: []u8, addr: *const net.Addr) usize {
 
 /// Parse a client UDP datagram (SOCKS5 UDP header + payload) and forward the
 /// payload to its target, creating the matching upstream socket on demand.
-fn forwardClientToTarget(packet: []const u8, up4: *net.Fd, up6: *net.Fd, timeout_sec: u32) void {
+fn forwardClientToTarget(packet: []const u8, up4: *net.Fd, up6: *net.Fd, timeout_sec: u32, cache: *DnsCache) void {
     // RSV(2) FRAG(1) ATYP(1) ADDR PORT DATA
     if (packet.len < 4) return;
     if (packet[2] != 0x00) return; // fragmentation unsupported
@@ -442,7 +482,7 @@ fn forwardClientToTarget(packet: []const u8, up4: *net.Fd, up6: *net.Fd, timeout
     const consumed = parseAddr(atyp, packet[4..], &target) orelse return;
     const data = packet[4 + consumed ..];
 
-    const dst = target.resolve(true) catch return;
+    const dst = target.resolveCached(true, cache) catch return;
     const fdp = if (dst.family() == c.AF.INET6) up6 else up4;
     if (fdp.* == net.invalid_fd) {
         fdp.* = net.udpSocket(dst.family()) catch return;
@@ -499,4 +539,32 @@ test "parseAddr truncated returns null" {
     var t = Target{};
     const data = [_]u8{ 1, 2 };
     try std.testing.expect(parseAddr(Atyp.ipv4, &data, &t) == null);
+}
+
+test "DnsCache hit and miss" {
+    var cache = DnsCache{};
+    var t = Target{};
+    @memcpy(t.host[0..9], "localhost");
+    t.host_len = 9;
+    t.port = 80;
+
+    // Empty cache misses.
+    try std.testing.expect(cache.get(&t) == null);
+
+    const a = net.Addr.fromIp4(.{ 127, 0, 0, 1 }, std.mem.nativeToBig(u16, 80));
+    cache.put(&t, a);
+
+    // Same host+port hits.
+    const hit = cache.get(&t) orelse return error.ExpectedHit;
+    try std.testing.expect(hit.eql(&a));
+
+    // Different port misses.
+    t.port = 443;
+    try std.testing.expect(cache.get(&t) == null);
+
+    // Different host misses.
+    t.port = 80;
+    @memcpy(t.host[0..7], "example");
+    t.host_len = 7;
+    try std.testing.expect(cache.get(&t) == null);
 }
