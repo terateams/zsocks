@@ -72,10 +72,13 @@ const Pool = struct {
 /// Atomic operational counters. Updated off the per-connection hot path with
 /// relaxed (monotonic) ordering — they are observability hints, not a barrier.
 const Stats = struct {
-    accepted: std.atomic.Value(u64) = .init(0),
-    refused: std.atomic.Value(u64) = .init(0),
-    active: std.atomic.Value(u64) = .init(0),
-    connect_failures: std.atomic.Value(u64) = .init(0),
+    // Use usize so atomics map to the target's native word size; 32-bit
+    // targets (e.g. armv7) lack lock-free 64-bit atomics. Connection counters
+    // never need more than the native word width for an observability hint.
+    accepted: std.atomic.Value(usize) = .init(0),
+    refused: std.atomic.Value(usize) = .init(0),
+    active: std.atomic.Value(usize) = .init(0),
+    connect_failures: std.atomic.Value(usize) = .init(0),
 };
 
 pub const Server = struct {
